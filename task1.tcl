@@ -67,7 +67,6 @@ Agent/TCP instproc done {} {
     #the class is determined by the flow-ID and total number of tcp-sources
     set sender [expr int(floor($flind/$nof_tcps))]
     set ind [expr $flind-$sender*$nof_tcps]
-    # puts "$flind $sender $ind"
     lappend nlist($sender) [list [$ns now] [llength $reslist($sender)]]
 
     for {set nn 0} {$nn < [llength $reslist($sender)]} {incr nn} {
@@ -84,10 +83,8 @@ Agent/TCP instproc done {} {
 
     set tt [$ns now]
     if {$starttime > $simstart && $tt < $simend} {
-        # puts "hi there $sender: [expr $tt-$starttime]"
         lappend delres($sender) [expr $tt-$starttime]
     }
-    # puts "$starttime"
     if {$tt > $simend} {
         $ns at $tt "$ns halt"
     }
@@ -97,7 +94,6 @@ Agent/TCP instproc done {} {
 ###########################################
 # Routine performed for each new flow arrival
 proc start_flow {sender timetostart} {
-    # puts "$timetostart"
     global ns freelist reslist ftp tcp_s tcp_d rng nof_tcps filesize mean_intarrtime simend nof_senders mean_size
     #you have to create the variables tcp_s (tcp source) and tcp_d (tcp destination)
     set tt [$ns now]
@@ -113,7 +109,6 @@ proc start_flow {sender timetostart} {
         set ind [lindex $freelist($sender) 0]
         set cur_fsize [expr ceil([$rng exponential $filesize])]
         lappend mean_size($sender) $cur_fsize
-        puts "$cur_fsize"
         [lindex $tcp_s($sender) $ind] reset
         [lindex $tcp_d($sender) $ind] reset
         $ns at $timetostart "[lindex $ftp($sender) $ind] produce $cur_fsize"
@@ -163,7 +158,7 @@ $loss_random_variable set min_ 0 # the range of the random variable;
 $loss_random_variable set max_ 100
 set loss_module [new ErrorModel]
 $loss_module drop-target [new Agent/Null]
-$loss_module set rate_ 10
+$loss_module set rate_ 1
 $loss_module ranvar $loss_random_variable
 
 $ns lossmodel $loss_module $node_(4) $node_(5)
@@ -202,11 +197,10 @@ set parr_end 0
 set pdrops_end 0 
 proc record_end { } { 
 
- global fmon ns parr_start pdrops_start nof_classes simend mean_size
+ global fmon ns parr_start pdrops_start nof_classes simend mean_size delres
  set parr_start [$fmon set parrivals_] 
  set pdrops_start [$fmon set pdrops_] 
  puts "Bottleneck at [$ns now]: arr=$parr_start, drops=$pdrops_start" 
- parray mean_size
  for {set ii 0} {$ii < 4} {incr ii} {
      set sum 0.0
     for {set jj 0} {$jj < 100} {incr jj} {
@@ -214,6 +208,15 @@ proc record_end { } {
     }
     set sum [expr $sum/100];
     puts "Mean size of file for the class $ii is $sum" 
+ }
+
+ for {set ii 0} {$ii < 4} {incr ii} {
+    set sum2 0.0
+    for {set jj 0} {$jj < 90} {incr jj} {
+        set sum2 [expr $sum2 + [lindex $delres($ii) $jj]]
+    }
+    set sum2 [expr $sum2/90];
+    puts "Mean delay of file for the class $ii is $sum2" 
  }
  
 }
