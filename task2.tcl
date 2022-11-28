@@ -24,15 +24,15 @@ set pktsize 1460 ; # Pkt size in bytes (1500 - IP header - TCP header)
 set filesize 500 ; #As count of packets
 
 # maximum number of tcps per class
-set nof_tcps 100
+set nof_tcps 300
 set nof_senders 4
 
 # the total (theoretical) load
-set rho 0.8
+set rho 0.9
 set rho_cl [expr ($rho/$nof_senders)]
 #flow interarrival time
 set mean_intarrtime [expr ($pktsize+40)*8.0*$filesize/(11000000*$rho_cl)]
-puts "1/la = $mean_intarrtime"
+# puts "1/la = $mean_intarrtime"
 
 for {set ii 0} {$ii < $nof_senders} {incr ii} {
     #contains the delay results for each class
@@ -45,27 +45,18 @@ for {set ii 0} {$ii < $nof_senders} {incr ii} {
     set reslist($ii) {}
     set tcp_s($ii) {}
     set tcp_d($ii) {}
+    set mean_size($ii) {}
+    set result($ii) {}
 
 }
 
-
-###########################################
-# Routine performed for each completed file transfer
 Agent/TCP instproc done {} {
-    global ns freelist reslist ftp rng filesize mean_intarrtime nof_tcps \
-        simstart simend delres nlist nof_senders
+    global ns freelist reslist ftp rng filesize mean_intarrtime nof_tcps simstart simend delres nlist nof_senders
 
     set flind [$self set fid_]
 
-    set sender [expr int(floor($flind/($nof_tcps*3)))]
-    set ind [expr $flind-$sender*$nof_tcps*3]
-
-    if {$sender > 3} {
-
-     set sender [expr $sender-4];
-     set ind [expr $ind +300]
-    }
-        
+    set sender [expr int(floor($flind/($nof_tcps)))]
+    set ind [expr $flind-$sender*$nof_tcps]
 
     lappend nlist($sender) [list [$ns now] [llength $reslist($sender)]]
 
@@ -91,25 +82,23 @@ Agent/TCP instproc done {} {
 }
 
 
-###########################################
-# Routine performed for each new flow arrival
-
 proc start_flow {sender timetostart} {
 
-    global ns freelist reslist ftp tcp_s tcp_d rng nof_tcps filesize mean_intarrtime simend nof_senders 
-    #you have to create the variables tcp_s (tcp source) and tcp_d (tcp destination)
+    global ns freelist reslist ftp tcp_s tcp_d rng nof_tcps filesize mean_intarrtime simend nof_senders mean_size
     set tt [$ns now]
     set freeflows [llength $freelist($sender)]
     set resflows [llength $reslist($sender)]
     lappend nlist($sender) [list $tt $resflows]
 
     if {$freeflows == 0} {
-        puts "Sender $sender: At $timetostart, nof of free TCP sources == 0!!!"
+        # puts "Sender $sender: At $timetostart, nof of free TCP sources == 0!!!"
     }
     if {$freeflows != 0} {
-        #take the first index from the list of free flows
         set ind [lindex $freelist($sender) 0]
         set cur_fsize [expr ceil([$rng exponential $filesize])]
+        # puts "$cur_fsize"
+        lappend mean_size($sender) $cur_fsize
+
         [lindex $tcp_s($sender) $ind] reset
         [lindex $tcp_d($sender) $ind] reset
         $ns at $timetostart "[lindex $ftp($sender) $ind] produce $cur_fsize"
@@ -194,7 +183,9 @@ $ns queue-limit $endnode_(22) $corenode_(7) 100
 $ns queue-limit $endnode_(23) $corenode_(7) 100
 $ns queue-limit $bottlenck_(1) $bottlenck_(0) 100
 
-
+set slink [$ns link $bottlenck_(1) $bottlenck_(0)]
+set fmon [$ns makeflowmon Fid]
+$ns attach-fmon $slink $fmon
 
 for {set ii 0} {$ii < 4} {incr ii} {
     for {set kk 0} {$kk < 3} {incr kk} {
@@ -205,7 +196,8 @@ for {set ii 0} {$ii < 4} {incr ii} {
         $tcp set window_ $maxwnd
         $ns attach-agent $endnode_([expr $ii*3+$kk]) $tcp
         set sink [new Agent/TCPSink]
-        $ns attach-agent $bottlenck_(1) $sink
+        set tmp [expr $ii*3+$kk+12]
+        $ns attach-agent $endnode_($tmp) $sink
         $ns connect $tcp $sink
         $tcp set fid_ [expr 300*($ii)+100*($kk) +  $jj]
 
@@ -220,44 +212,65 @@ for {set ii 0} {$ii < 4} {incr ii} {
     }
 }
 
+set parr_start 0 
+set pdrops_start 0 
+proc record_start {} { 
+ global fmon ns parr_start pdrops_start nof_classes 
+ set parr_start [$fmon set parrivals_] 
+ set pdrops_start [$fmon set pdrops_] 
+ puts "Bottleneck at [$ns now]: arr=$parr_start, drops=$pdrops_start" 
+} 
 
-for {set ii 4} {$ii < 8} {incr ii} {
-    for {set kk 0} {$kk < 3} {incr kk} {
-        for {set jj 0} {$jj < 100} {incr jj} {
-        set tcp [new Agent/TCP]
-        $tcp set packetSize_ $pktsize
-        $tcp set class_ 2
-        $tcp set window_ $maxwnd
-        $ns attach-agent $endnode_([expr $ii*3+$kk]) $tcp
-        set sink [new Agent/TCPSink]
-        $ns attach-agent $bottlenck_(0) $sink
-        $ns connect $tcp $sink
-        $tcp set fid_ [expr 300*$ii+100*$kk +  $jj]
 
-        lappend tcp_s([expr $ii-4]) $tcp
-        lappend tcp_d([expr $ii-4]) $sink
-        set ftp_local [new Application/FTP]
-        $ftp_local attach-agent $tcp
-        $ftp_local set type_ FTP
-        lappend ftp([expr $ii-4]) $ftp_local
-        lappend freelist([expr $ii-4]) [expr 300+100*$kk +  $jj]
-      }
-    }
+record_start
+$ns at 0 "[start_flow 0 0]"
+$ns at 0 "[start_flow 1 0]"
+$ns at 0 "[start_flow 2 0]"
+$ns at 0 "[start_flow 3 0]"
+
+set parr_end 0 
+set pdrops_end 0 
+proc record_end { } { 
+  global fmon ns parr_start pdrops_start nof_classes simend mean_size delres result
+  set parr_start [$fmon set parrivals_] 
+  set pdrops_start [$fmon set pdrops_] 
+  puts "Bottleneck at [$ns now]: arr=$parr_start, drops=$pdrops_start" 
+ for {set ii 0} {$ii < 4} {incr ii} {
+      set sum 0.0
+      for {set jj 0} {$jj < [llength $mean_size($ii)]} {incr jj} {
+          set sum [expr $sum + [lindex $mean_size($ii) $jj]]
+        }
+      set sum [expr $sum/[llength $mean_size($ii)]];
+      lappend result($ii) [expr $sum*1500*8/1000000]
+    #   puts "Mean size of file for the class $ii is $sum " 
+}
 }
 
-$ns at 50 "[start_flow 0 0]"
-$ns at 50 "[start_flow 1 0]"
-$ns at 50 "[start_flow 2 0]"
-$ns at 50 "[start_flow 3 0]"
-
-
 proc finish {} {
-    global ns namfd tracefd parr_start pdrops_start fmon  delres
+    global ns namfd tracefd parr_start pdrops_start fmon  delres mean_size delres result
+    record_end
+
+      for {set j 0} {$j < 4} {incr j} {
+        set sum 0.0
+        for {set i 0} {$i < [llength $delres($j)]} {incr i} {
+            set sum [expr $sum + [lindex $delres($j) $i]]
+        }
+        set sum [expr $sum/[llength $delres($j)]]
+        puts "Average time for class t is $sum"
+        set var($j) $sum
+        set k [lindex $result($j) 0];
+        set ans [expr   $k/$sum]
+        puts "Average throughput  of class $j is [expr $ans] Mb";
+    }
+
+    for {set j 0} {$j < 4} {incr j} {
+        puts "Ratio of class $j and class 0 is [expr $var($j)/$var(0)]"
+    }
     $ns flush-trace
-    #Close the NAM trace file
+
     close $namfd
     close $tracefd
-    #Execute NAM on the trace file
+
     exec nam out.nam &
     exit 0
 }
